@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title data-i18n="app.title">StockWatch · 美股监控</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>📈</text></svg>">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">📈 StockWatch</div>
+  <div class="status" id="status-bar">
+    <span id="market-badge" class="badge">--</span>
+    <span id="last-poll">--</span>
+    <span id="next-poll">--</span>
+  </div>
+  <div class="actions">
+    <span class="lang-switch">
+      <button type="button" class="lang" data-lang="zh">中文</button><button
+              type="button" class="lang" data-lang="en">EN</button>
+    </span>
+    <button id="btn-refresh" class="btn primary" data-i18n="top.refresh">立即刷新</button>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button class="tab active" data-tab="overview" data-i18n="nav.overview">行情总览</button>
+  <button class="tab" data-tab="watch" data-i18n="nav.watch">追踪与告警</button>
+  <button class="tab" data-tab="holdings" data-i18n="nav.holdings">持仓收益</button>
+  <button class="tab" data-tab="accounts" data-i18n="nav.accounts">账户</button>
+  <button class="tab" data-tab="reports" data-i18n="nav.reports">年报点评</button>
+  <button class="tab" data-tab="history" data-i18n="nav.history">告警记录</button>
+  <button class="tab" data-tab="settings" data-i18n="nav.settings">设置</button>
+</nav>
+
+<main>
+  <!-- ------------------------------------------------ 行情总览 -->
+  <section class="panel active" id="panel-overview">
+    <h2 data-i18n="ov.indices">指数</h2>
+    <div class="cards" id="index-cards"></div>
+    <form class="inline-form" id="index-add-form">
+      <input type="text" id="index-symbol" data-i18n-ph="ov.addIndexSymbol" autocomplete="off">
+      <input type="text" id="index-alias" data-i18n-ph="ov.addIndexAlias" autocomplete="off">
+      <button class="btn" type="submit" data-i18n="ov.addIndex">添加指数</button>
+    </form>
+
+    <h2 data-i18n="ov.watched">追踪的股票</h2>
+    <div class="cards" id="watch-cards"></div>
+  </section>
+
+  <!-- ------------------------------------------------ 追踪与告警 -->
+  <section class="panel" id="panel-watch">
+    <h2 data-i18n="watch.addStock">添加股票</h2>
+    <form class="inline-form" id="watch-add-form">
+      <div class="search-wrap">
+        <input type="text" id="watch-symbol" data-i18n-ph="watch.symbolPh" autocomplete="off">
+        <div class="suggest" id="suggest-box" hidden></div>
+      </div>
+      <label><span data-i18n="watch.up">涨</span> <input type="number" id="watch-up" step="0.1" min="0" value="5" class="num"> %</label>
+      <label><span data-i18n="watch.down">跌</span> <input type="number" id="watch-down" step="0.1" min="0" value="5" class="num"> %</label>
+      <button class="btn primary" type="submit" data-i18n="watch.add">添加</button>
+    </form>
+    <p class="hint" data-i18n="watch.addHint">阈值填 0 表示该方向不提醒。</p>
+
+    <h2 data-i18n="watch.list">追踪列表</h2>
+    <div class="table-wrap">
+      <table id="watch-table">
+        <thead>
+          <tr>
+            <th data-i18n="watch.th.enabled">启用</th><th data-i18n="watch.th.symbol">代码 / 名称</th>
+            <th class="right" data-i18n="watch.th.price">现价</th>
+            <th class="right" data-i18n="watch.th.change">涨跌幅</th>
+            <th class="right" data-i18n="watch.th.up" data-i18n-title="watch.tip.up">涨 %</th>
+            <th class="right" data-i18n="watch.th.down" data-i18n-title="watch.tip.down">跌 %</th>
+            <th class="right" data-i18n="watch.th.cooldown" data-i18n-title="watch.tip.cooldown">冷却</th>
+            <th data-i18n="watch.th.daily" data-i18n-title="watch.tip.daily">每日一次</th>
+            <th data-i18n="watch.th.note">备注</th><th data-i18n="watch.th.actions">操作</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="watch-tbody"></tbody>
+      </table>
+    </div>
+    <p class="hint">
+      <span data-i18n="watch.listHint">改动会立即保存。</span>
+      <button class="btn small" id="btn-reset-alerts" type="button" data-i18n="watch.resetDedup">重置去重状态</button>
+    </p>
+  </section>
+
+  <!-- ------------------------------------------------ 持仓收益 -->
+  <section class="panel" id="panel-holdings">
+    <div class="row" style="margin-bottom:12px">
+      <label class="s-meta"><span data-i18n="pf.account">账户</span>
+        <select id="pf-account" style="margin-left:4px"><option value="" data-i18n="pf.allAccounts">全部</option></select>
+      </label>
+      <a class="btn small" id="btn-export" href="/api/portfolio/export.pdf" download data-i18n="pf.exportPdf">导出 PDF</a>
+      <span class="msg" id="pf-warning"></span>
+    </div>
+    <div class="kpi-row" id="pf-kpis"></div>
+
+    <h2 data-i18n="pf.positions">持仓明细</h2>
+    <div class="table-wrap">
+      <table id="pos-table">
+        <thead>
+          <tr>
+            <th data-i18n="pf.th.account">账户</th><th data-i18n="pf.th.symbol">代码 / 名称</th>
+            <th class="right" data-i18n="pf.th.shares">持股</th><th class="right" data-i18n="pf.th.price">现价</th>
+            <th class="right" data-i18n="pf.th.value">市值 €</th>
+            <th class="right" data-i18n="pf.th.invested">总投入 €</th>
+            <th class="right" data-i18n="pf.th.dividends">已收股息 €</th>
+            <th class="right" data-i18n="pf.th.breakeven">摊薄成本 €</th>
+            <th class="right" data-i18n="pf.th.profit">总收益 €</th>
+            <th class="right" data-i18n="pf.th.returnPct">收益率</th>
+            <th class="right" data-i18n="pf.th.annualized">年化</th>
+            <th class="right" data-i18n="pf.th.days">持有天数</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="pos-tbody"></tbody>
+      </table>
+    </div>
+    <p class="hint">
+      <span data-i18n-html="pf.hint"></span>
+      <span id="fx-note"></span>
+    </p>
+
+    <h2 data-i18n="tx.add">记一笔</h2>
+    <form class="inline-form" id="tx-form">
+      <select id="tx-account" style="width:110px"></select>
+      <select id="tx-kind">
+        <option value="BUY" data-i18n="tx.kind.BUY">买入</option>
+        <option value="SELL" data-i18n="tx.kind.SELL">卖出</option>
+        <option value="DIV" data-i18n="tx.kind.DIV">收到股息</option>
+      </select>
+      <select id="tx-symbol" style="width:150px"></select>
+      <!-- 不用 <input type="date">：它的显示格式跟浏览器语言走，en-US 下是 09/29/2025，
+           月和日容易看反。这里拆成三个下拉，顺序固定为年-月-日。 -->
+      <span class="date-picker">
+        <select id="tx-year" data-i18n-aria="tx.year"></select><i data-i18n="tx.year">年</i>
+        <select id="tx-month" data-i18n-aria="tx.month"></select><i data-i18n="tx.month">月</i>
+        <select id="tx-day" data-i18n-aria="tx.day"></select><i data-i18n="tx.day">日</i>
+        <button type="button" class="btn small" id="tx-today" data-i18n="tx.today">今天</button>
+      </span>
+      <label><span data-i18n="tx.shares">股数</span> <input type="number" id="tx-shares" step="0.0001" min="0" class="num"></label>
+      <label><span data-i18n="tx.price">每股价</span> <input type="number" id="tx-price" step="0.0001" min="0" class="num"></label>
+      <select id="tx-currency" style="width:88px">
+        <option value="USD">USD</option>
+        <option value="EUR">EUR</option>
+        <option value="GBP">GBP</option>
+      </select>
+      <label><span data-i18n="tx.fee">手续费 €</span> <input type="number" id="tx-fee" step="0.01" min="0" class="num" value="0"></label>
+      <label><span data-i18n="tx.amount">实付/到账 €</span> <input type="number" id="tx-amount" step="0.01" min="0" class="num"></label>
+      <input type="text" id="tx-note" data-i18n-ph="tx.notePh" style="width:130px">
+      <button class="btn primary" type="submit" data-i18n="tx.submit">添加</button>
+    </form>
+    <p class="hint" data-i18n-html="tx.hint"></p>
+
+    <div class="row" style="margin-top:22px">
+      <h2 style="margin:0" data-i18n="tx.ledger">交易流水</h2>
+      <button class="btn small" id="btn-verify" type="button" data-i18n="tx.verify">核对成交价</button>
+      <button class="btn small" id="btn-reverify" type="button" data-i18n="tx.reverify">全部重新核对</button>
+      <span class="msg" id="verify-msg"></span>
+    </div>
+    <p class="hint" data-i18n-html="tx.verifyHint"></p>
+    <div class="table-wrap">
+      <table id="tx-table">
+        <thead>
+          <tr><th data-i18n="tx.th.date">日期</th><th data-i18n="tx.th.account">账户</th>
+              <th data-i18n="tx.th.symbol">代码</th><th data-i18n="tx.th.kind">类型</th>
+              <th class="right" data-i18n="tx.th.shares">股数</th>
+              <th class="right" data-i18n="tx.th.price">每股价</th>
+              <th class="right" data-i18n="tx.th.fee">手续费 €</th>
+              <th class="right" data-i18n="tx.th.amount">金额 €</th>
+              <th data-i18n="tx.th.check">核对</th><th data-i18n="tx.th.note">备注</th><th></th></tr>
+        </thead>
+        <tbody id="tx-tbody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------ 账户 -->
+  <section class="panel" id="panel-accounts">
+    <h2 data-i18n="acct.overview">账户一览</h2>
+    <div class="kpi-row" id="acct-cards"></div>
+
+    <h2 data-i18n="acct.manage">管理账户</h2>
+    <form class="inline-form" id="acct-form">
+      <input type="text" id="acct-name" data-i18n-ph="acct.namePh" autocomplete="off" style="width:160px">
+      <input type="text" id="acct-note" data-i18n-ph="acct.notePh" style="width:200px">
+      <button class="btn primary" type="submit" data-i18n="acct.add">添加账户</button>
+    </form>
+
+    <div class="table-wrap" style="margin-top:12px">
+      <table id="acct-table">
+        <thead>
+          <tr><th data-i18n="acct.th.name">账户名</th><th data-i18n="acct.th.note">备注</th>
+              <th class="right" data-i18n="acct.th.count">流水条数</th>
+              <th class="right" data-i18n="acct.th.invested">总投入 €</th>
+              <th class="right" data-i18n="acct.th.value">市值 €</th>
+              <th class="right" data-i18n="acct.th.dividends">股息 €</th>
+              <th class="right" data-i18n="acct.th.profit">总收益 €</th><th></th></tr>
+        </thead>
+        <tbody id="acct-tbody"></tbody>
+      </table>
+    </div>
+    <p class="hint" data-i18n-html="acct.hint"></p>
+  </section>
+
+  <!-- ------------------------------------------------ 年报点评 -->
+  <section class="panel" id="panel-reports">
+    <div class="row">
+      <h2 style="margin:0" data-i18n="rep.title">已生成的年报点评</h2>
+      <button class="btn" id="btn-rep-email" data-i18n="rep.emailRecent">把最近 5 份发到邮箱</button>
+      <span class="msg" id="msg-rep"></span>
+    </div>
+    <p class="hint" data-i18n-html="rep.hint"></p>
+    <div id="rep-list"></div>
+  </section>
+
+  <!-- ------------------------------------------------ 告警记录 -->
+  <section class="panel" id="panel-history">
+    <h2 data-i18n="hist.title">最近告警</h2>
+    <div class="table-wrap">
+      <table id="alert-table">
+        <thead>
+          <tr><th data-i18n="hist.th.time">时间</th><th data-i18n="hist.th.symbol">代码</th>
+              <th data-i18n="hist.th.direction">方向</th>
+              <th class="right" data-i18n="hist.th.change">涨跌幅</th>
+              <th class="right" data-i18n="hist.th.threshold">阈值</th>
+              <th class="right" data-i18n="hist.th.price">价格</th>
+              <th data-i18n="hist.th.mail">邮件</th><th data-i18n="hist.th.detail">说明</th></tr>
+        </thead>
+        <tbody id="alert-tbody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------ 设置 -->
+  <section class="panel" id="panel-settings">
+    <div class="grid-2">
+      <div class="card-box">
+        <h2 data-i18n="set.general">抓取与判定</h2>
+        <label class="field"><span data-i18n="set.interval">查询间隔（分钟）</span>
+          <input type="number" id="cfg-interval" min="1" step="1">
+        </label>
+        <label class="field"><span data-i18n="set.baseline">涨跌幅基准</span>
+          <select id="cfg-baseline">
+            <option value="prev_close" data-i18n="set.baseline.prev">相对昨收</option>
+            <option value="today_open" data-i18n="set.baseline.open">相对今日开盘价</option>
+          </select>
+        </label>
+        <label class="check"><input type="checkbox" id="cfg-market-only"> <span data-i18n="set.marketOnly">只在美股交易时段内判定告警</span></label>
+        <label class="field"><span data-i18n="set.positionReturn">持仓收益里程碑提醒（%，0 = 关闭）</span>
+          <input type="number" id="cfg-position-return" step="10" min="0">
+        </label>
+        <label class="field"><span data-i18n="set.keepDays">历史数据保留天数</span>
+          <input type="number" id="cfg-keep-days" min="1" step="1">
+        </label>
+        <div class="row">
+          <button class="btn primary" id="btn-save-general" data-i18n="set.save">保存</button>
+          <span class="msg" id="msg-general"></span>
+        </div>
+      </div>
+
+      <div class="card-box">
+        <h2 data-i18n="set.mail">邮件发送设置</h2>
+        <label class="check"><input type="checkbox" id="mail-enabled"> <span data-i18n="set.mailEnabled">启用邮件提醒</span></label>
+        <div class="grid-2 tight">
+          <label class="field"><span data-i18n="set.smtpHost">SMTP 服务器</span><input type="text" id="mail-host" placeholder="smtp.gmail.com"></label>
+          <label class="field"><span data-i18n="set.smtpPort">端口</span><input type="number" id="mail-port" placeholder="465"></label>
+        </div>
+        <div class="grid-2 tight">
+          <label class="field"><span data-i18n="set.security">加密方式</span>
+            <select id="mail-security">
+              <option value="ssl" data-i18n="set.security.ssl">SSL</option>
+              <option value="starttls" data-i18n="set.security.starttls">STARTTLS</option>
+              <option value="none" data-i18n="set.security.none">不加密</option>
+            </select>
+          </label>
+          <label class="field"><span data-i18n="set.username">登录用户名</span><input type="text" id="mail-username" placeholder="you@gmail.com"></label>
+        </div>
+        <label class="field"><span data-i18n="set.password">密码 / 授权码</span>
+          <input type="password" id="mail-password" data-i18n-ph="set.passwordPh">
+        </label>
+        <label class="field"><span data-i18n="set.from">发件地址</span><input type="text" id="mail-from" data-i18n-ph="set.fromPh"></label>
+        <label class="field"><span data-i18n="set.to">收件地址（多个用逗号分隔）</span>
+          <input type="text" id="mail-to" placeholder="a@x.com, b@y.com">
+        </label>
+        <label class="field"><span data-i18n="set.prefix">邮件标题前缀</span><input type="text" id="mail-prefix" placeholder="[StockWatch]"></label>
+        <div class="row">
+          <button class="btn primary" id="btn-save-mail" data-i18n="set.save">保存</button>
+          <button class="btn" id="btn-test-mail" data-i18n="set.testMail">发送测试邮件</button>
+          <span class="msg" id="msg-mail"></span>
+        </div>
+        <p class="hint" data-i18n-html="set.mailHint"></p>
+      </div>
+
+      <div class="card-box">
+        <h2 data-i18n="llm.title">年报点评（DeepSeek）</h2>
+        <label class="check"><input type="checkbox" id="llm-enabled"> <span data-i18n="llm.enabled">启用</span></label>
+        <label class="check"><input type="checkbox" id="llm-auto"> <span data-i18n="llm.auto">发现新财年年报时自动生成总结</span></label>
+        <div class="grid-2 tight">
+          <label class="field"><span data-i18n="llm.baseUrl">接口地址</span><input type="text" id="llm-base" placeholder="https://api.deepseek.com"></label>
+          <label class="field"><span data-i18n="llm.model">模型</span><input type="text" id="llm-model" placeholder="deepseek-chat"></label>
+        </div>
+        <label class="field"><span data-i18n="llm.apiKey">API Key</span>
+          <input type="password" id="llm-key" data-i18n-ph="llm.apiKeyPh">
+        </label>
+        <div class="grid-2 tight">
+          <label class="field">temperature<input type="number" id="llm-temp" step="0.1" min="0" max="2"></label>
+          <label class="field">max_tokens<input type="number" id="llm-maxtok" step="100" min="256"></label>
+        </div>
+        <div class="grid-2 tight">
+          <label class="field"><span data-i18n="llm.timeout">超时（秒）</span><input type="number" id="llm-timeout" step="10" min="10"></label>
+          <label class="field"><span data-i18n="llm.scanInterval">扫描新年报间隔（小时）</span><input type="number" id="llm-interval" step="1" min="1"></label>
+        </div>
+        <label class="check"><input type="checkbox" id="llm-position"> <span data-i18n="llm.position">上下文里带上自己的持仓</span></label>
+        <label class="check"><input type="checkbox" id="llm-quarterly"> <span data-i18n="llm.quarterly">季报也自动点评</span></label>
+        <label class="check"><input type="checkbox" id="llm-tools"> <span data-i18n="llm.tools">开启函数调用</span></label>
+        <label class="check"><input type="checkbox" id="llm-email"> <span data-i18n="llm.emailSummary">自动生成的点评发到邮箱</span></label>
+        <div class="row">
+          <button class="btn primary" id="btn-save-llm" data-i18n="set.save">保存</button>
+          <button class="btn" id="btn-test-llm" data-i18n="llm.test">测试连接</button>
+          <button class="btn" id="btn-check-reports" data-i18n="llm.scan">扫描新年报</button>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <select id="llm-symbol" style="width:170px"></select>
+          <select id="llm-period" style="width:90px">
+            <option value="annual" data-i18n="rep.annual">年报</option>
+            <option value="quarterly" data-i18n="rep.quarterly">季报</option>
+          </select>
+          <button class="btn" id="btn-gen-one" data-i18n="llm.genOne">为它生成点评</button>
+          <label class="s-meta"><input type="checkbox" id="llm-force"> <span data-i18n="llm.force">已有也重新生成</span></label>
+        </div>
+        <div class="row"><span class="msg" id="msg-llm"></span></div>
+        <p class="hint" data-i18n-html="llm.hint"></p>
+      </div>
+
+      <div class="card-box">
+        <h2 data-i18n="web.title">联网检索（Tavily）</h2>
+        <label class="check"><input type="checkbox" id="web-enabled"> <span data-i18n="web.enabled">启用</span></label>
+        <label class="field"><span data-i18n="web.apiKey">Tavily API Key</span>
+          <input type="password" id="web-key" data-i18n-ph="web.apiKeyPh">
+        </label>
+        <div class="grid-2 tight">
+          <label class="field"><span data-i18n="web.maxResults">每次检索取回条数</span><input type="number" id="web-results" step="1" min="1" max="10"></label>
+          <label class="field"><span data-i18n="web.maxSearches">每篇点评最多检索几次</span><input type="number" id="web-searches" step="1" min="1" max="6"></label>
+        </div>
+        <div class="grid-2 tight">
+          <label class="field"><span data-i18n="web.depth">检索深度</span>
+            <select id="web-depth">
+              <option value="basic" data-i18n="web.depth.basic">basic</option>
+              <option value="advanced" data-i18n="web.depth.advanced">advanced</option>
+            </select>
+          </label>
+          <label class="field"><span data-i18n="web.days">新闻回溯天数</span><input type="number" id="web-days" step="1" min="1" max="365"></label>
+        </div>
+        <label class="field"><span data-i18n="web.domains">域名白名单</span>
+          <textarea id="web-domains" rows="4" placeholder="reuters.com&#10;sec.gov"></textarea>
+        </label>
+        <div class="row">
+          <button class="btn primary" id="btn-save-web" data-i18n="set.save">保存</button>
+          <button class="btn" id="btn-test-web" data-i18n="web.test">测试检索</button>
+          <span class="msg" id="msg-web"></span>
+        </div>
+        <p class="hint" data-i18n-html="web.hint"></p>
+      </div>
+
+      <div class="card-box">
+        <h2 data-i18n="data.title">数据备份与迁移</h2>
+        <p class="s-meta" id="data-stats"></p>
+        <div class="row">
+          <a class="btn primary" id="btn-export-db" href="/api/data/export.db"
+             download data-i18n="data.exportDb">导出整个数据库</a>
+          <a class="btn" id="btn-export-json" href="/api/data/export.json"
+             download data-i18n="data.exportJson">导出可移植数据（JSON）</a>
+          <button class="btn" id="btn-import" data-i18n="data.import">导入文件…</button>
+          <!-- 真正的 file input 藏起来，用按钮触发：默认那个「未选择文件」的样式跟页面不搭 -->
+          <input type="file" id="import-file" accept=".db,.json,.sqlite,application/json" hidden>
+        </div>
+        <div class="row"><span class="msg" id="msg-data"></span></div>
+        <p class="hint" data-i18n-html="data.hint"></p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- 走势弹窗 -->
+<div class="modal" id="chart-modal" hidden>
+  <div class="modal-box">
+    <div class="modal-head">
+      <span id="chart-title" data-i18n="modal.trend">走势</span>
+      <span class="spacer"></span>
+      <select id="chart-range">
+        <option value="6" data-i18n="modal.range6">近 6 小时</option>
+        <option value="24" selected data-i18n="modal.range24">近 24 小时</option>
+        <option value="72" data-i18n="modal.range72">近 3 天</option>
+        <option value="168" data-i18n="modal.range168">近 7 天</option>
+      </select>
+      <button class="btn small" id="chart-close" data-i18n="modal.close">关闭</button>
+    </div>
+    <canvas id="chart-canvas" width="720" height="320"></canvas>
+    <p class="hint" id="chart-hint"></p>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="{{ url_for('static', filename='i18n.js') }}"></script>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

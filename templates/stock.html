@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title data-i18n-title-symbol="{{ symbol }}">{{ symbol }} · 基本面 · StockWatch</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>📊</text></svg>">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body data-symbol="{{ symbol }}">
+<header class="topbar">
+  <a class="brand" href="/">📈 StockWatch</a>
+  <div class="status">
+    <span id="hd-name" data-i18n="sp.loading">载入中…</span>
+    <span id="hd-exchange"></span>
+    <span id="hd-cached"></span>
+  </div>
+  <div class="actions">
+    <span class="lang-switch">
+      <button type="button" class="lang" data-lang="zh">中文</button><button
+              type="button" class="lang" data-lang="en">EN</button>
+    </span>
+    <button id="btn-back" class="btn" data-i18n="sp.back">← 返回监控页</button>
+    <button id="btn-reload" class="btn" data-i18n="sp.reload">重新抓取</button>
+  </div>
+</header>
+
+<main>
+  <div class="kpi-row" id="kpis"></div>
+  <p class="hint" id="meta-note"></p>
+
+  <div class="grid-2" id="insight-wrap">
+    <section class="card-box insight" data-period="annual">
+      <div class="row">
+        <h2 style="margin:0" data-i18n="ins.annual">年报点评</h2>
+        <span class="s-meta" data-el="meta"></span>
+        <span style="flex:1"></span>
+        <button type="button" class="btn small" data-el="gen">生成</button>
+      </div>
+      <div class="insight-body" data-el="body"></div>
+    </section>
+    <section class="card-box insight" data-period="quarterly">
+      <div class="row">
+        <h2 style="margin:0" data-i18n="ins.quarterly">季报点评</h2>
+        <span class="s-meta" data-el="meta"></span>
+        <span style="flex:1"></span>
+        <button type="button" class="btn small" data-el="gen">生成</button>
+      </div>
+      <div class="insight-body" data-el="body"></div>
+    </section>
+  </div>
+
+  <div id="charts" class="chart-grid"></div>
+
+  <h2 data-i18n="sp.annualTable">年报明细</h2>
+  <div class="table-wrap" id="annual-table"></div>
+
+  <p class="hint" data-i18n="sp.pageHint"></p>
+</main>
+
+<script src="{{ url_for('static', filename='i18n.js') }}"></script>
+<script src="{{ url_for('static', filename='charts.js') }}"></script>
+<script src="{{ url_for('static', filename='stock.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+# 运行时生成：里面有 SMTP 密码，不要提交
+config.json
+config.json.tmp
+
+# 本地数据库
+stockwatch.db
+stockwatch.db-wal
+stockwatch.db-shm
+
+__pycache__/
+*.py[cod]
+.venv/
+*.log
+dist/
+logs/
+stockwatch.db.bak-*

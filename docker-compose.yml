@@ -1,0 +1,22 @@
+# docker compose up -d
+#
+# 数据放在项目目录下的 ./data 里，能直接在文件管理器里看到，也方便备份。
+# 第一次启动前可以把旧的 config.json 放进 ./data，设置就全带过来了。
+services:
+  stockwatch:
+    build: .
+    image: stockwatch
+    container_name: stockwatch
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+    volumes:
+      - ./data:/data
+    environment:
+      # 数据文件在宿主机上归谁。群晖一般是 1026 / 100（SSH 里运行 id 可查）；
+      # 普通 Linux 一般是 1000 / 1000。填错也能跑，只是文件属主不是你。
+      # 不要改用 user: —— 那样容器没权限修正目录属主。
+      PUID: "1026"
+      PGID: "100"
+      # 判断美股交易时段和显示时间要用，按自己所在时区改
+      TZ: Europe/Berlin

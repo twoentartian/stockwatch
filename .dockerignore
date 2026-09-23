@@ -1,0 +1,24 @@
+# 数据和密钥绝不能烤进镜像
+config.json
+config.json.tmp
+stockwatch.db
+stockwatch.db-wal
+stockwatch.db-shm
+stockwatch.db.bak-*
+logs/
+dist/
+
+.git/
+__pycache__/
+*.py[cod]
+*.log
+.venv/
+.idea/
+.vscode/
+
+# 宿主机专用的启动脚本，容器里用不上
+run.sh
+start.bat
+stop.bat
+package.bat
+package.sh
