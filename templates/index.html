@@ -227,11 +227,21 @@
               <th class="right" data-i18n="hist.th.change">涨跌幅</th>
               <th class="right" data-i18n="hist.th.threshold">阈值</th>
               <th class="right" data-i18n="hist.th.price">价格</th>
-              <th data-i18n="hist.th.mail">邮件</th><th data-i18n="hist.th.detail">说明</th></tr>
+              <th data-i18n="hist.th.mail">邮件</th><th data-i18n="hist.th.detail">说明</th>
+              <th data-i18n="hist.th.analysis">原因</th></tr>
         </thead>
         <tbody id="alert-tbody"></tbody>
       </table>
     </div>
+
+    <div class="row" style="margin-top:22px">
+      <h2 style="margin:0" data-i18n="moves.title">异动分析存档</h2>
+      <select id="move-symbol" style="width:170px"></select>
+      <button class="btn" id="btn-move-analyze" data-i18n="moves.analyzeNow">分析今天的涨跌</button>
+      <span class="msg" id="msg-move"></span>
+    </div>
+    <p class="hint" data-i18n-html="moves.hint"></p>
+    <div id="move-list"></div>
   </section>
 
   <!-- ------------------------------------------------ 设置 -->
@@ -317,6 +327,7 @@
         <label class="check"><input type="checkbox" id="llm-quarterly"> <span data-i18n="llm.quarterly">季报也自动点评</span></label>
         <label class="check"><input type="checkbox" id="llm-tools"> <span data-i18n="llm.tools">开启函数调用</span></label>
         <label class="check"><input type="checkbox" id="llm-email"> <span data-i18n="llm.emailSummary">自动生成的点评发到邮箱</span></label>
+        <label class="check"><input type="checkbox" id="llm-moves"> <span data-i18n="llm.moves">股价异动告警时，让模型查一下原因</span></label>
         <div class="row">
           <button class="btn primary" id="btn-save-llm" data-i18n="set.save">保存</button>
           <button class="btn" id="btn-test-llm" data-i18n="llm.test">测试连接</button>

@@ -1,0 +1,5 @@
+# 换行符。Windows 上的 git 默认会把 LF 转成 CRLF，shell 脚本变成 CRLF 就跑不起来
+# （$'\r': command not found），容器和 WSL 里用的也都是 LF。
+* text=auto eol=lf
+# .bat 必须是 CRLF，cmd 对 LF 的 .bat 会出各种怪问题
+*.bat text eol=crlf

@@ -155,6 +155,9 @@ def chat_with_tools(
             result["usage"] = total_usage
             result["tool_log"] = tool_log
             result["rounds"] = round_index + 1
+            # 包含全部工具调用和返回结果（不含最终答案）。需要重写答案时从这里接着来，
+            # 而不是从头再查一遍——检索额度已经花掉了，重查只会什么都查不到
+            result["conversation"] = conversation
             return result
 
         # 模型那条带 tool_calls 的消息必须原样回填，否则下一轮对不上 id
@@ -186,6 +189,7 @@ def chat_with_tools(
     result["usage"] = total_usage
     result["tool_log"] = tool_log
     result["rounds"] = max_rounds
+    result["conversation"] = conversation
     return result
 
 

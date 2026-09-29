@@ -29,7 +29,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 NAME = "stockwatch"
 
 # 目录级排除：整棵子树都不要
-SKIP_DIRS = {"__pycache__", ".git", ".idea", ".vscode", "dist", "logs", ".pytest_cache", ".ruff_cache"}
+SKIP_DIRS = {"__pycache__", ".git", ".idea", ".vscode", "dist", "logs", "backups",
+             ".pytest_cache", ".ruff_cache"}
 # 文件级排除（glob）
 SKIP_FILES = [
     "*.pyc", "*.pyo", "*.log", "*.tmp", "*.zip",
@@ -37,6 +38,7 @@ SKIP_FILES = [
     "*.db", "*.db-wal", "*.db-shm",            # 有数据，单独按开关处理
     ".DS_Store", "_*.py",                      # _chk.py 之类的临时脚本
     "*.db.bak-*",                              # 导入前的自动备份
+    ".deploy.json",                            # 部署脚本记住的 NAS 地址
 ]
 
 SECRET_FIELDS = (("email", "password"), ("llm", "api_key"), ("websearch", "api_key"))

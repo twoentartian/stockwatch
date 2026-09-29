@@ -351,3 +351,12 @@ a.brand { text-decoration: none; color: inherit; }
 .lang-switch .lang + .lang { border-left: 1px solid var(--border); }
 .lang-switch .lang:hover { color: var(--text); }
 .lang-switch .lang.active { background: var(--accent); color: #fff; }
+
+/* ------------------------------------------------------------------ 异动分析 */
+.analysis-row td { background: var(--bg); padding: 10px 14px 14px; }
+.analysis-row .insight-body { margin-bottom: 6px; }
+details.move { margin: 10px 0; padding: 10px 14px; }
+details.move summary { cursor: pointer; list-style: revert; }
+details.move[open] summary { margin-bottom: 8px; }
+/* 参考来源里的长链接没有空格可断行，不加这个会把整张表撑出横向滚动条 */
+.analysis-row .insight-body, details.move .insight-body { overflow-wrap: anywhere; }

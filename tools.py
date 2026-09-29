@@ -292,10 +292,14 @@ class Toolset:
     定时任务线程和网页请求线程可能同时在生成点评，所以预算不能放模块级全局。
     """
 
-    def __init__(self, web_cfg: dict | None = None):
+    def __init__(self, web_cfg: dict | None = None, exclude: tuple[str, ...] = ()):
         self.web_cfg = dict(web_cfg) if websearch.is_configured(web_cfg) else None
         self.searches_left = int((web_cfg or {}).get("max_searches") or 3) if self.web_cfg else 0
+        # 按任务裁掉用不到的工具。用不到的能力就别给——比如异动分析根本不需要持仓，
+        # 模型拿不到持仓，也就不可能把它写进发往第三方的查询词
+        self.exclude = set(exclude)
         self.queries: list[str] = []   # 本次到底把什么发出去了，回传前端备查
+        self.sources: list[str] = []   # 搜索实际返回过的链接：输出里只允许引用这些
 
     @property
     def web_enabled(self) -> bool:
@@ -303,7 +307,8 @@ class Toolset:
 
     @property
     def schemas(self) -> list[dict]:
-        return LOCAL_SCHEMAS + ([WEB_SCHEMA] if self.web_enabled else [])
+        local = [s for s in LOCAL_SCHEMAS if s["function"]["name"] not in self.exclude]
+        return local + ([WEB_SCHEMA] if self.web_enabled else [])
 
     def _web_search(self, query: str, topic: str = "news", days=None) -> str:
         if not self.web_enabled:
@@ -319,6 +324,7 @@ class Toolset:
             return json.dumps({"error": f"检索失败：{exc}"}, ensure_ascii=False)
 
         self.queries.append(result["query"])
+        self.sources.extend(r["url"] for r in result["results"] if r.get("url"))
         if not result["results"]:
             return json.dumps(
                 {"query": result["query"], "results": [],
@@ -329,7 +335,8 @@ class Toolset:
     def execute(self, name: str, arguments: str | dict) -> str:
         """执行一次工具调用，返回给模型看的字符串。绝不抛异常。"""
         spec = ARG_KEYS.get(name)
-        if not spec:
+        if not spec or name in self.exclude:
+            # 被裁掉的工具要在执行层也拦住——schema 里不给，模型照样可能凭名字硬调
             return json.dumps({"error": f"没有名为 {name} 的工具"}, ensure_ascii=False)
         allowed, required = spec
 

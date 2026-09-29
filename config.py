@@ -71,6 +71,9 @@ DEFAULTS = {
         "use_tools": True,        # 开函数调用：模型可按需查行情/财报/分红/持仓（全本地，不联网）
         "email_summary": True,    # 自动生成的点评发到邮箱（要邮件通知本身也启用）
         "check_interval_hours": 12,
+        # 股价异动告警时让模型查一下"为什么"，结果存档并附在告警邮件里
+        "analyze_moves": True,
+        "analyze_moves_max": 5,   # 一轮最多分析几只：大盘暴跌时全部触发，没必要每只都查一遍
     },
     # 联网检索（Tavily）。**整个项目里唯一会把数据发到外网的东西**，默认关闭。
     # 只在 llm.use_tools 也打开时才生效——它是以工具的形式给模型用的。
@@ -228,6 +231,8 @@ def _sanitize(cfg: dict) -> dict:
     llm_cfg["timeout_s"] = max(10, int(_to_float(llm_cfg.get("timeout_s"), 120)))
     llm_cfg["max_tokens"] = max(1000, int(_to_float(llm_cfg.get("max_tokens"), 8000)))
     llm_cfg["check_interval_hours"] = max(1, int(_to_float(llm_cfg.get("check_interval_hours"), 12)))
+    llm_cfg["analyze_moves"] = bool(llm_cfg.get("analyze_moves", True))
+    llm_cfg["analyze_moves_max"] = max(1, min(int(_to_float(llm_cfg.get("analyze_moves_max"), 5)), 20))
     cfg["llm"] = llm_cfg
 
     web = cfg.get("websearch", {})

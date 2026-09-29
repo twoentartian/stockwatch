@@ -22,3 +22,11 @@ start.bat
 stop.bat
 package.bat
 package.sh
+
+# 部署脚本和它在本地留的东西
+deploy.py
+deploy.sh
+deploy.bat
+requirements-deploy.txt
+.deploy.json
+backups/

@@ -452,11 +452,26 @@ def _looks_complete(text: str) -> bool:
     """输出是不是我们要的那份 Markdown，而不是思维链或半截内容。
 
     会先思考再作答的模型有两种翻车方式：思考过程漏进正文（认不出 ## 小标题），
-    以及思考把 token 额度吃光、答案被拦腰截断（结尾没有正常的句末标点）。
+    以及思考把 token 额度吃光、答案被拦腰截断（这个由 finish_reason 判断，见 truncated）。
+
+    结尾那一行如果是链接或列表项也算完整——联网之后答案以「## 参考来源」的链接列表收尾，
+    链接不以句号结尾。以前只认句末标点，每次带链接的答案都被误判成不完整、白白重试一次。
     """
     if "## " not in text:
         return False
-    return text.rstrip()[-1] in "。！？.!?)）】」”\"'"
+    body = text.rstrip()
+    last = body.splitlines()[-1].strip() if body else ""
+    if last.startswith(("- ", "* ", "[")) or "http" in last:
+        return True
+    return body[-1] in "。！？.!?)）】」”\"'"
+
+
+def _sum_usage(*usages) -> dict:
+    total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    for usage in usages:
+        for key in total:
+            total[key] += (usage or {}).get(key, 0) or 0
+    return total
 
 
 def _call(llm_cfg: dict, messages: list[dict], budget: int,
@@ -483,20 +498,32 @@ def _chat_with_retry(llm_cfg: dict, messages: list[dict],
     retry_budget = min(budget * 3, 32000)
     log.warning("%s，用 max_tokens=%d 重试一次", reason, retry_budget)
 
-    retry_messages = messages + [{
+    retry_note = {
         "role": "user",
-        "content": "上一次的回答不完整。请重新输出完整的总结，"
-                   "严格按要求的四个 ## 小标题格式，不要输出任何思考过程，直接给最终结果。",
-    }]
+        "content": "上一次的回答不完整。请根据上面已经拿到的资料，重新输出完整的最终结果，"
+                   "严格按要求的格式，不要输出任何思考过程，直接给最终结果。",
+    }
     try:
-        second = _call(llm_cfg, retry_messages, retry_budget, toolset)
+        if result.get("conversation"):
+            # 工具模式：查到的东西都在对话里，重来只需要"重写"，不要再查。
+            # 以前这里用原始消息从头开一轮——查过的结果全丢了，检索额度又已经花掉，
+            # 重写出来的反而是一份"什么都没查到"的结论，而且存档的就是这一份
+            second = llm.chat(llm_cfg, result["conversation"] + [retry_note],
+                              json_mode=False, max_tokens=retry_budget)
+        else:
+            second = _call(llm_cfg, messages + [retry_note], retry_budget, None)
     except llm.LLMError as exc:
         log.warning("重试也失败了（%s），沿用第一次的结果", exc)
         return result
 
-    if _looks_complete(second["text"]) or not result.get("truncated"):
-        return second
+    # 两次都花了钱，用量要加在一起；调用了哪些工具以第一次为准
+    second["usage"] = _sum_usage(result.get("usage"), second.get("usage"))
+    second["tool_log"] = result.get("tool_log") or []
     return second
+
+
+# 异动分析（movers.py）也要用同一套"截断就加大额度重试一次"的逻辑
+chat_with_retry = _chat_with_retry
 
 
 def latest_period(data: dict, period_type: str) -> dict | None:

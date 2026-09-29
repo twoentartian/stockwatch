@@ -207,16 +207,65 @@ function renderWatchTable(watchlist) {
   }
 }
 
+/* 展开过的分析要记住：renderAlerts 每 30 秒随状态刷新整个重画，不记的话正看着就被收起来了 */
+const openAnalyses = new Set();     // 展开着的告警 id
+const analysisCache = {};           // 分析 id -> 记录，重画时不用再请求一次
+
+function moveMeta(rec) {
+  const tokens = (rec.prompt_tokens || 0) + (rec.completion_tokens || 0);
+  const n = (rec.web_queries || []).length;
+  return t('moves.meta', { model: rec.model || 'LLM', tokens }) +
+    (n ? t('moves.web', { n }) : t('moves.noWeb'));
+}
+
+/* 分析正文 + 出网查询词。查询词每次都摆出来——那是唯一发到第三方的东西，要能核 */
+function moveBody(rec) {
+  const queries = (rec.web_queries || []).length
+    ? `<div class="s-meta" style="margin-top:6px">${escapeHtml(
+        t('moves.queries', { q: rec.web_queries.map((q) => `“${q}”`).join('、') }))}</div>` : '';
+  return `<div class="insight-body">${miniMarkdown(rec.summary || '')}</div>` +
+    `<div class="s-meta">${escapeHtml(moveMeta(rec))}</div>${queries}`;
+}
+
+async function toggleAnalysis(alert, tr) {
+  const next = tr.nextElementSibling;
+  if (next && next.classList.contains('analysis-row')) {
+    next.remove();
+    openAnalyses.delete(alert.id);
+    tr.querySelector('[data-act=why]').textContent = t('hist.view');
+    return;
+  }
+  let rec = analysisCache[alert.analysis_id];
+  if (!rec) {
+    rec = await api(`/api/moves/${alert.analysis_id}`);
+    if (!rec.ok) { toast(rec.error || t('moves.failed'), true); return; }
+    analysisCache[alert.analysis_id] = rec;
+  }
+  const row = document.createElement('tr');
+  row.className = 'analysis-row';
+  row.innerHTML = `<td colspan="9">${moveBody(rec)}</td>`;
+  tr.after(row);
+  openAnalyses.add(alert.id);
+  tr.querySelector('[data-act=why]').textContent = t('hist.hide');
+}
+
 function renderAlerts(list) {
   const tbody = $('alert-tbody');
   tbody.innerHTML = '';
   if (!list || !list.length) {
-    tbody.innerHTML = `<tr><td colspan="8" class="hint">${t('hist.empty')}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="hint">${t('hist.empty')}</td></tr>`;
     return;
   }
   const mailText = { sent: t('hist.mailOk'), failed: t('hist.mailFail'), skipped: t('hist.mailSkip') };
   list.forEach((a) => {
     const tr = document.createElement('tr');
+    // 有分析就「查看」；涨跌告警没有分析（比如当时没开这个功能）就给个「分析」按钮现补；
+    // 收益里程碑不是当日异动，没什么可查的
+    let why = '';
+    if (a.analysis_id) why = `<button type="button" class="btn small" data-act="why">${t('hist.view')}</button>`;
+    else if (a.direction === 'up' || a.direction === 'down') {
+      why = `<button type="button" class="btn small" data-act="analyze">${t('hist.analyze')}</button>`;
+    }
     tr.innerHTML =
       `<td>${fmtTime(a.ts)}</td>` +
       `<td><b>${escapeHtml(a.symbol)}</b> <span class="s-meta">${escapeHtml(a.name || '')}</span></td>` +
@@ -226,8 +275,32 @@ function renderAlerts(list) {
       `<td class="right">${fmtNum(a.threshold)}%</td>` +
       `<td class="right">${fmtNum(a.price)}</td>` +
       `<td>${mailText[a.email_status] || escapeHtml(a.email_status || '')}</td>` +
-      `<td class="s-meta">${escapeHtml(a.detail || '')}</td>`;
+      `<td class="s-meta">${escapeHtml(a.detail || '')}</td>` +
+      `<td class="nowrap">${why}</td>`;
     tbody.appendChild(tr);
+
+    const whyBtn = tr.querySelector('[data-act=why]');
+    if (whyBtn) whyBtn.addEventListener('click', () => toggleAnalysis(a, tr));
+    const anaBtn = tr.querySelector('[data-act=analyze]');
+    if (anaBtn) {
+      anaBtn.addEventListener('click', async () => {
+        anaBtn.disabled = true;
+        anaBtn.textContent = t('hist.analyzing');
+        const res = await post('/api/moves/analyze', { alert_id: a.id });
+        if (!res.ok) {
+          anaBtn.disabled = false;
+          anaBtn.textContent = t('hist.analyze');
+          toast(res.error || t('moves.failed'), true);
+          return;
+        }
+        analysisCache[res.id] = res;
+        openAnalyses.add(a.id);
+        toast(t('moves.done', { symbol: a.symbol }));
+        loadState();
+        loadMoves();
+      });
+    }
+    if (a.analysis_id && openAnalyses.has(a.id)) toggleAnalysis(a, tr);
   });
 }
 
@@ -435,6 +508,7 @@ function fillSymbolSelect(watchlist) {
   const fallback = [{ value: '', label: t('llm.emptyWatch') }];
   fillSelect($('tx-symbol'), options.length ? options : fallback, true);
   fillSelect($('llm-symbol'), options.length ? options : fallback, true);
+  fillSelect($('move-symbol'), options.length ? options : fallback, true);
 }
 
 async function loadPortfolio() {
@@ -883,6 +957,7 @@ async function loadConfig() {
   $('llm-email').checked = !!l.email_summary;
   $('llm-quarterly').checked = !!l.include_quarterly;
   $('llm-tools').checked = !!l.use_tools;
+  $('llm-moves').checked = l.analyze_moves !== false;
   $('llm-base').value = l.base_url || '';
   $('llm-model').value = l.model || '';
   $('llm-key').value = l.api_key || '';      // 占位符或空，明文永远拿不到
@@ -963,6 +1038,7 @@ function llmFormValues() {
     email_summary: $('llm-email').checked,
     include_quarterly: $('llm-quarterly').checked,
     use_tools: $('llm-tools').checked,
+    analyze_moves: $('llm-moves').checked,
     base_url: $('llm-base').value.trim(),
     model: $('llm-model').value.trim(),
     api_key: $('llm-key').value,
@@ -1049,6 +1125,41 @@ $('btn-test-mail').addEventListener('click', async () => {
   showMsg('msg-mail', t('set.sending'), false);
   const res = await post('/api/email/test', { email: mailFormValues() });
   showMsg('msg-mail', res.message || t(res.ok ? 'rep.sent' : 'rep.sendFailed'), !res.ok);
+});
+
+/* ------------------------------------------------------------------ 异动分析存档 */
+
+async function loadMoves() {
+  const data = await api('/api/moves?limit=20');
+  const box = $('move-list');
+  const rows = data.analyses || [];
+  if (!rows.length) {
+    box.innerHTML = `<p class="hint">${t('moves.empty')}</p>`;
+    return;
+  }
+  // 用 <details>：二十篇全展开太长，默认只展开最新一篇
+  box.innerHTML = rows.map((r, i) => {
+    analysisCache[r.id] = r;
+    const trig = t(r.trigger === 'manual' ? 'moves.trigger.manual' : 'moves.trigger.alert');
+    return `<details class="card-box move"${i === 0 ? ' open' : ''}>` +
+      `<summary><b>${escapeHtml(r.symbol)}</b> ` +
+      `<span class="${dirClass(r.change_pct)}">${fmtPct(r.change_pct)}</span> ` +
+      `<span class="s-meta">${escapeHtml(r.trade_date)} · ${trig} · ${fmtTime(r.created_at)}</span>` +
+      `</summary>${moveBody(r)}</details>`;
+  }).join('');
+}
+
+$('btn-move-analyze').addEventListener('click', async () => {
+  const symbol = $('move-symbol').value;
+  if (!symbol) { showMsg('msg-move', t('llm.emptyWatch'), true); return; }
+  const btn = $('btn-move-analyze');
+  btn.disabled = true;
+  showMsg('msg-move', t('moves.running', { symbol }), false);
+  const res = await post('/api/moves/analyze', { symbol });
+  btn.disabled = false;
+  if (!res.ok) { showMsg('msg-move', res.error || t('moves.failed'), true); return; }
+  showMsg('msg-move', t('moves.done', { symbol }), false);
+  loadMoves();
 });
 
 /* ------------------------------------------------------------------ 数据导出 / 导入 */
@@ -1216,6 +1327,7 @@ initI18n(() => {
   loadPortfolio();    // KPI、持仓表、账户卡、流水表
   loadReports();      // 年报点评列表
   loadDataStats();    // 「当前库 X MB，N 笔流水」那一行
+  loadMoves();        // 异动分析存档
   syncTxKindUI();     // 「实付/到账」的 placeholder 是 JS 写的，applyStatic 管不到
   fillAccountSelects();
 });
@@ -1228,4 +1340,5 @@ loadConfig();
 loadState();
 loadPortfolio();
 loadDataStats();
+loadMoves();
 stateTimer = setInterval(() => { loadState(); loadPortfolio(); }, REFRESH_MS);

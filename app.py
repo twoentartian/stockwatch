@@ -25,6 +25,7 @@ import fundamentals
 import fx
 import insights
 import llm
+import movers
 import notifier
 import portfolio
 import providers
@@ -90,7 +91,15 @@ def poll_once(reason: str = "scheduled") -> dict:
 
         triggered = []
         try:
-            triggered = alerts.notify(alerts.evaluate(quotes, cfg), cfg)
+            triggered = alerts.evaluate(quotes, cfg)
+            if triggered and movers.enabled(cfg):
+                # 要查原因的话，邮件得等分析跑完（几十秒）。不能在这里干等——
+                # 那会一直占着轮询锁。先把去重状态占住，再交给后台线程
+                alerts.claim(triggered)
+                threading.Thread(target=_notify_with_analysis, args=(triggered, cfg),
+                                 name="move-analysis", daemon=True).start()
+            else:
+                alerts.notify(triggered, cfg)
         except Exception:
             log.exception("告警处理失败")
 
@@ -131,6 +140,21 @@ def poll_once(reason: str = "scheduled") -> dict:
         }
     finally:
         _poll_lock.release()
+
+
+def _notify_with_analysis(triggered: list[dict], cfg: dict) -> None:
+    """后台：先查原因，再发邮件。分析出任何问题都不能让告警本身丢掉。"""
+    analyses: dict = {}
+    try:
+        analyses = movers.analyze_batch(triggered, cfg)
+    except Exception as exc:
+        log.exception("异动分析整体失败，告警照常发送")
+        analyses = {a["symbol"]: {"error": f"分析失败：{exc}"} for a in triggered}
+    finally:
+        try:
+            alerts.notify(triggered, cfg, analyses)
+        except Exception:
+            log.exception("告警发送失败")
 
 
 def reschedule(minutes: int) -> None:
@@ -585,6 +609,50 @@ def api_portfolio_export():
             "Content-Length": str(len(pdf)),
         },
     )
+
+
+# --------------------------------------------------------------------------- 异动原因分析
+
+@app.get("/api/moves")
+def api_moves():
+    symbol = config.normalize_symbol(request.args.get("symbol", ""))
+    limit = max(1, min(int(request.args.get("limit") or 30), 200))
+    return jsonify({"analyses": store.move_analyses(symbol or None, limit),
+                    "enabled": movers.enabled(config.load())})
+
+
+@app.get("/api/moves/<int:analysis_id>")
+def api_move(analysis_id: int):
+    record = store.get_move_analysis(analysis_id)
+    if not record:
+        return jsonify({"ok": False, "error": "找不到这条分析"}), 404
+    return jsonify({"ok": True, **record})
+
+
+@app.post("/api/moves/analyze")
+def api_moves_analyze():
+    """手动分析。传 alert_id 就分析那条告警并挂上去；传 symbol 就按当前行情分析今天的涨跌。
+    不发邮件——这是给人看、给人测试用的。"""
+    body = request.get_json(silent=True) or {}
+    cfg = config.load()
+    try:
+        if body.get("alert_id"):
+            alert = store.get_alert(int(body["alert_id"]))
+            if not alert:
+                return jsonify({"ok": False, "error": "找不到这条告警"}), 404
+            record = movers.analyze(alert, cfg, trigger="manual")
+            store.set_alert_analysis(alert["id"], record["id"])
+        else:
+            symbol = config.normalize_symbol(body.get("symbol", ""))
+            if not symbol:
+                return jsonify({"ok": False, "error": "缺少股票代码"}), 400
+            record = movers.analyze(movers.alert_from_quote(symbol, cfg), cfg, trigger="manual")
+    except (llm.LLMError, providers.QuoteError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 502
+    except Exception as exc:
+        log.exception("异动分析失败")
+        return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"}), 500
+    return jsonify({"ok": True, **record})
 
 
 # --------------------------------------------------------------------------- 数据导出 / 导入

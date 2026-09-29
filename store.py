@@ -93,6 +93,24 @@ CREATE TABLE IF NOT EXISTS fx_rates (
 );
 
 -- 账户：区分这笔是谁买的（我 / 妈妈 / …）
+CREATE TABLE IF NOT EXISTS move_analyses (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol            TEXT    NOT NULL,
+    trade_date        TEXT    NOT NULL,   -- 美东交易日
+    direction         TEXT,               -- up / down
+    change_pct        REAL,
+    price             REAL,
+    currency          TEXT,
+    summary           TEXT,
+    model             TEXT,
+    prompt_tokens     INTEGER,
+    completion_tokens INTEGER,
+    web_queries       TEXT,               -- JSON：到底往外发了什么查询词
+    sources           TEXT,               -- JSON：搜索实际返回过的链接
+    trigger           TEXT,               -- alert / manual
+    created_at        INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_moves_symbol_date ON move_analyses(symbol, trade_date);
 CREATE TABLE IF NOT EXISTS accounts (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     name       TEXT NOT NULL UNIQUE,
@@ -204,6 +222,11 @@ def _init() -> None:
     with _lock, _connect() as conn:
         conn.executescript(SCHEMA)
         _migrate_report_summaries(conn)
+
+        # 迁移：告警记录关联到它的异动分析
+        alert_cols = {r["name"] for r in conn.execute("PRAGMA table_info(alerts)")}
+        if "analysis_id" not in alert_cols:
+            conn.execute("ALTER TABLE alerts ADD COLUMN analysis_id INTEGER")
 
         # 迁移：早期版本的流水表没有这些列
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(transactions)")}
@@ -317,11 +340,12 @@ def history(symbol: str, hours: int = 48, limit: int = 2000) -> list[dict]:
         return [dict(r) for r in cur.fetchall()]
 
 
-def insert_alert(alert: dict) -> None:
+def insert_alert(alert: dict) -> int:
     with _lock, _connect() as conn:
-        conn.execute(
+        cur = conn.execute(
             "INSERT INTO alerts (ts, symbol, name, direction, change_pct, threshold,"
-            " price, baseline, email_status, detail) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            " price, baseline, email_status, detail, analysis_id)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (
                 int(alert.get("ts") or time.time()),
                 alert["symbol"],
@@ -333,8 +357,35 @@ def insert_alert(alert: dict) -> None:
                 alert.get("baseline"),
                 alert.get("email_status"),
                 alert.get("detail"),
+                alert.get("analysis_id"),
             ),
         )
+        return int(cur.lastrowid)
+
+
+def get_alert(alert_id: int) -> dict | None:
+    with _lock, _connect() as conn:
+        row = conn.execute("SELECT * FROM alerts WHERE id = ?", (int(alert_id),)).fetchone()
+        return dict(row) if row else None
+
+
+def set_alert_analysis(alert_id: int, analysis_id: int) -> None:
+    with _lock, _connect() as conn:
+        conn.execute("UPDATE alerts SET analysis_id = ? WHERE id = ?",
+                     (int(analysis_id), int(alert_id)))
+
+
+def link_alert_analysis(symbol: str, ts: int, direction: str, analysis_id: int) -> None:
+    """按 (代码, 触发时间, 方向) 把分析挂到告警记录上。
+
+    分析和告警记录谁先写库不一定（超时的分析会晚到），所以两边都会尝试关联：
+    告警先到的话这里补上；分析先到的话这里改不到任何行，由写告警时带上。
+    """
+    with _lock, _connect() as conn:
+        conn.execute(
+            "UPDATE alerts SET analysis_id = ? WHERE symbol = ? AND ts = ? AND direction = ?"
+            " AND analysis_id IS NULL",
+            (int(analysis_id), symbol, int(ts), direction))
 
 
 def recent_alerts(limit: int = 50) -> list[dict]:
@@ -732,3 +783,54 @@ def prune_backups(keep: int = 3) -> None:
         return
     for name in backups[:-keep] if keep > 0 else backups:
         _quiet_remove(os.path.join(folder, name))
+
+
+# --------------------------------------------------------------------------- 异动分析存档
+
+def _decode_move(row) -> dict:
+    out = dict(row)
+    for key in ("web_queries", "sources"):
+        try:
+            out[key] = json.loads(out.get(key) or "[]")
+        except (TypeError, ValueError):
+            out[key] = []
+    return out
+
+
+def put_move_analysis(record: dict) -> int:
+    with _lock, _connect() as conn:
+        cur = conn.execute(
+            "INSERT INTO move_analyses (symbol, trade_date, direction, change_pct, price,"
+            " currency, summary, model, prompt_tokens, completion_tokens, web_queries,"
+            " sources, trigger, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                record["symbol"], record["trade_date"], record.get("direction"),
+                record.get("change_pct"), record.get("price"), record.get("currency"),
+                record.get("summary"), record.get("model"),
+                record.get("prompt_tokens"), record.get("completion_tokens"),
+                json.dumps(record.get("web_queries") or [], ensure_ascii=False),
+                json.dumps(record.get("sources") or [], ensure_ascii=False),
+                record.get("trigger") or "alert",
+                int(record.get("created_at") or time.time()),
+            ),
+        )
+        return int(cur.lastrowid)
+
+
+def get_move_analysis(analysis_id: int) -> dict | None:
+    with _lock, _connect() as conn:
+        row = conn.execute("SELECT * FROM move_analyses WHERE id = ?",
+                           (int(analysis_id),)).fetchone()
+        return _decode_move(row) if row else None
+
+
+def move_analyses(symbol: str | None = None, limit: int = 30) -> list[dict]:
+    with _lock, _connect() as conn:
+        if symbol:
+            cur = conn.execute(
+                "SELECT * FROM move_analyses WHERE symbol = ? ORDER BY created_at DESC LIMIT ?",
+                (symbol, int(limit)))
+        else:
+            cur = conn.execute(
+                "SELECT * FROM move_analyses ORDER BY created_at DESC LIMIT ?", (int(limit),))
+        return [_decode_move(r) for r in cur.fetchall()]

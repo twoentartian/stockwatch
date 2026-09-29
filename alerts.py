@@ -122,7 +122,45 @@ def _format_subject(triggered: list[dict]) -> str:
     return "股价异动：" + "、".join(parts) + more
 
 
-def _format_bodies(triggered: list[dict]) -> tuple[str, str]:
+def _analysis_sections(triggered: list[dict], analyses: dict) -> tuple[list[str], str]:
+    """每只票一段「为什么涨/跌」。模型输出是不可信内容，只走 summary_to_html 的白名单渲染。"""
+    from insights import summary_to_html   # 函数内导入：alerts 是底层模块，别在加载时牵出一串依赖
+
+    text_lines, html_parts = [], []
+    for a in triggered:
+        record = analyses.get(a["symbol"])
+        if not record:
+            continue
+        arrow = "涨" if a["direction"] == "up" else "跌"
+        head = f"{a['symbol']} 为什么{arrow}了 {abs(a['change_pct']):.2f}%"
+        if record.get("error"):
+            text_lines += [f"--- {head} ---", f"分析未完成：{record['error']}", ""]
+            html_parts.append(
+                f"<p style='color:#888;font-size:13px;margin:14px 0 0'><b>{a['symbol']}</b>："
+                f"分析未完成（{_esc(record['error'])}）</p>")
+            continue
+        searches = len(record.get("web_queries") or [])
+        meta = f"由 {record.get('model') or 'LLM'} 生成" + (f" · 联网检索 {searches} 次" if searches else " · 未联网")
+        text_lines += [f"--- {head} ---", record.get("summary") or "", f"（{meta}）", ""]
+        html_parts.append(
+            "<div style='margin-top:18px;padding-top:12px;border-top:1px solid #eee'>"
+            f"<h3 style='font-size:15px;margin:0 0 2px'>{_esc(head)}</h3>"
+            f"<div style='color:#888;font-size:12px;margin-bottom:6px'>{_esc(meta)}</div>"
+            f"<div style='font-size:14px;line-height:1.7'>{summary_to_html(record.get('summary') or '')}</div>"
+            "</div>")
+    return text_lines, "".join(html_parts)
+
+
+def _esc(s) -> str:
+    return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace('"', "&quot;"))
+
+
+ANALYSIS_FOOTER = ("原因分析由大语言模型根据公开新闻和网页生成，内容未经核实，"
+                   "只能当作线索，不构成任何投资建议。")
+
+
+def _format_bodies(triggered: list[dict], analyses: dict | None = None) -> tuple[str, str]:
     stamp = market_now().strftime("%Y-%m-%d %H:%M:%S %Z")
     lines = [f"触发时间（美东）：{stamp}", ""]
     rows = []
@@ -146,9 +184,14 @@ def _format_bodies(triggered: list[dict]) -> tuple[str, str]:
             f"<td style='padding:6px 10px;text-align:right;color:#666'>"
             f"{'涨' if a['direction'] == 'up' else '跌'} {a['threshold']:.2f}%</td></tr>"
         )
+    analysis_text, analysis_html = _analysis_sections(triggered, analyses or {})
+    if analysis_text:
+        lines += ["", "===== 异动原因分析 ====="] + analysis_text + [ANALYSIS_FOOTER]
     lines.append("")
     lines.append("—— StockWatch 自动发送")
 
+    footer_note = (f"<p style='color:#999;font-size:12px;margin-top:10px'>{ANALYSIS_FOOTER}</p>"
+                   if analysis_html else "")
     html = (
         "<div style=\"font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif\">"
         f"<h3 style='margin:0 0 4px'>股价异动提醒</h3>"
@@ -162,7 +205,9 @@ def _format_bodies(triggered: list[dict]) -> tuple[str, str]:
         "<th style='padding:6px 10px;text-align:right'>阈值</th></tr>"
         + "".join(rows)
         + "</table>"
-        "<p style='color:#888;font-size:12px;margin-top:14px'>—— StockWatch 自动发送</p></div>"
+        + analysis_html
+        + footer_note
+        + "<p style='color:#888;font-size:12px;margin-top:14px'>—— StockWatch 自动发送</p></div>"
     )
     return "\n".join(lines), html
 
@@ -290,23 +335,43 @@ def notify_positions(triggered: list[dict], cfg: dict) -> list[dict]:
     return triggered
 
 
-def notify(triggered: list[dict], cfg: dict) -> list[dict]:
-    """把触发项汇总成一封邮件发出，并写入数据库。返回带发送结果的记录。"""
+def claim(triggered: list[dict]) -> None:
+    """先把去重状态占住。
+
+    带原因分析时，发邮件要等分析跑完（几十秒）。这段时间里如果再来一轮抓取
+    （比如手动点了「立即刷新」），状态还没写就会把同一条告警再触发一次。
+    """
+    for alert in triggered:
+        store.set_alert_state(
+            f"{alert['symbol']}:{alert['direction']}",
+            alert["ts"],
+            trade_date(alert["ts"]),
+            alert["change_pct"],
+        )
+
+
+def notify(triggered: list[dict], cfg: dict, analyses: dict | None = None) -> list[dict]:
+    """把触发项汇总成一封邮件发出，并写入数据库。返回带发送结果的记录。
+
+    analyses：{代码: 分析记录 或 {"error": 原因}}，有的话附在邮件里。
+    """
     if not triggered:
         return []
+    analyses = analyses or {}
 
     email_cfg = cfg.get("email", {})
     if not email_cfg.get("enabled"):
         status, detail = "skipped", "邮件通知未启用"
     else:
         subject = _format_subject(triggered)
-        text, html = _format_bodies(triggered)
+        text, html = _format_bodies(triggered, analyses)
         ok, message = notifier.send_mail(email_cfg, subject, text, html)
         status, detail = ("sent" if ok else "failed"), message
 
     for alert in triggered:
         alert["email_status"] = status
         alert["detail"] = detail
+        alert["analysis_id"] = (analyses.get(alert["symbol"]) or {}).get("id")
         store.insert_alert(alert)
         store.set_alert_state(
             f"{alert['symbol']}:{alert['direction']}",
