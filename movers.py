@@ -106,7 +106,7 @@ def _market_lines() -> list[str]:
 
 def build_messages(alert: dict, web_enabled: bool, max_searches: int = 3) -> list[dict]:
     symbol = alert["symbol"]
-    move_date = alerts.trade_date(alert.get("ts"))
+    move_date = alert.get("trade_date") or alerts.trade_date(alert.get("ts"))
     today = alerts.trade_date()
     arrow = "上涨" if alert.get("direction") == "up" else "下跌"
     cur = alert.get("currency") or ""
@@ -199,7 +199,7 @@ def analyze(alert: dict, cfg: dict | None = None, trigger: str = "alert") -> dic
     usage = result.get("usage") or {}
     record = {
         "symbol": alert["symbol"],
-        "trade_date": alerts.trade_date(alert.get("ts")),
+        "trade_date": alert.get("trade_date") or alerts.trade_date(alert.get("ts")),
         "direction": alert.get("direction"),
         "change_pct": alert.get("change_pct"),
         "price": alert.get("price"),

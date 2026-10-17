@@ -106,6 +106,7 @@ def fetch_quote(symbol: str) -> dict:
         "currency": meta.get("currency"),
         "exchange": meta.get("fullExchangeName") or meta.get("exchangeName"),
         "market_time": meta.get("regularMarketTime"),
+        "exchange_tz": meta.get("exchangeTimezoneName"),
         "fetched_at": int(time.time()),
         "ts": int(time.time()),
     }

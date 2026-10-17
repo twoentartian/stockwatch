@@ -27,6 +27,23 @@ def trade_date(ts: int | None = None) -> str:
     return dt.strftime("%Y-%m-%d")
 
 
+def session_date(quote: dict) -> str:
+    """这条行情属于哪个交易日：按最后成交时间、在交易所本地时区取日期。
+
+    不能用「现在」的日期：美东过了零点、新的交易日还没开盘时，行情还是上一个
+    交易日的（昨收也没变），按日历日去重会把同一次涨跌再报一遍。
+    东京这类开盘时段跨美东零点的市场，也必须用交易所时区才不会被切成两天。
+    """
+    ts = quote.get("market_time")
+    if not ts:
+        return trade_date()
+    try:
+        tz = ZoneInfo(quote.get("exchange_tz") or "America/New_York")
+    except (KeyError, ValueError):   # ZoneInfoNotFoundError 是 KeyError 的子类
+        tz = MARKET_TZ
+    return datetime.fromtimestamp(int(ts), tz).strftime("%Y-%m-%d")
+
+
 def is_market_open(now: datetime | None = None) -> bool:
     """美东时间的常规交易时段（不含节假日判断）。"""
     now = now or market_now()
@@ -59,7 +76,6 @@ def evaluate(quotes: dict, cfg: dict, now_ts: int | None = None) -> list[dict]:
     if alert_cfg.get("market_hours_only") and not is_market_open():
         return []
 
-    today = trade_date()
     triggered = []
 
     for item in cfg.get("watchlist", []):
@@ -84,10 +100,11 @@ def evaluate(quotes: dict, cfg: dict, now_ts: int | None = None) -> list[dict]:
         if not direction:
             continue
 
+        session = session_date(quote)
         key = f"{symbol}:{direction}"
         state = store.get_alert_state(key)
         if state:
-            same_day = state.get("trade_date") == today
+            same_day = state.get("trade_date") == session
             if item.get("once_per_day", True) and same_day:
                 continue
             cooldown = int(item.get("cooldown_minutes") or 0) * 60
@@ -107,6 +124,7 @@ def evaluate(quotes: dict, cfg: dict, now_ts: int | None = None) -> list[dict]:
                 "open": quote.get("open"),
                 "baseline": baseline,
                 "currency": quote.get("currency") or "USD",
+                "trade_date": session,
             }
         )
     return triggered
@@ -345,7 +363,7 @@ def claim(triggered: list[dict]) -> None:
         store.set_alert_state(
             f"{alert['symbol']}:{alert['direction']}",
             alert["ts"],
-            trade_date(alert["ts"]),
+            alert.get("trade_date") or trade_date(alert["ts"]),
             alert["change_pct"],
         )
 
@@ -376,7 +394,7 @@ def notify(triggered: list[dict], cfg: dict, analyses: dict | None = None) -> li
         store.set_alert_state(
             f"{alert['symbol']}:{alert['direction']}",
             alert["ts"],
-            trade_date(alert["ts"]),
+            alert.get("trade_date") or trade_date(alert["ts"]),
             alert["change_pct"],
         )
         log.info(
